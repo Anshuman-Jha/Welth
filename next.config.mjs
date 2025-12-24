@@ -14,6 +14,11 @@ const nextConfig = {
       bodySizeLimit: "5mb",
     },
   },
+
+  // Optimize for Vercel Edge Function size limits
+  swcMinify: true,
+  compress: true,
+  poweredByHeader: false,
 };
 
 export default nextConfig;
