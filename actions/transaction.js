@@ -4,8 +4,8 @@ import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import aj from "@/lib/arcjet";
-import { request } from "@arcjet/next";
+import { transactionLimiter, checkRateLimit } from "@/lib/arcjet-protection";
+import { headers } from "next/headers";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -20,31 +20,17 @@ export async function createTransaction(data) {
     const { userId } = await auth();
     if (!userId) throw new Error("Unauthorized");
 
-    // Get request data for ArcJet
-    const req = await request();
+    // Get client IP for rate limiting
+    const headersList = await headers();
+    const ip = headersList.get("x-forwarded-for") || "127.0.0.1";
 
     // Check rate limit
-    const decision = await aj.protect(req, {
-      userId,
-      requested: 1, // Specify how many tokens to consume
-    });
-
-    if (decision.isDenied()) {
-      if (decision.reason.isRateLimit()) {
-        const { remaining, reset } = decision.reason;
-        console.error({
-          code: "RATE_LIMIT_EXCEEDED",
-          details: {
-            remaining,
-            resetInSeconds: reset,
-          },
-        });
-
-        throw new Error("Too many requests. Please try again later.");
-      }
-
-      throw new Error("Request blocked");
+    const rateLimitCheck = await checkRateLimit(transactionLimiter, userId, ip);
+    if (!rateLimitCheck.success) {
+      throw new Error(rateLimitCheck.error);
     }
+
+    // Rest of the transaction creation logic
 
     const user = await db.user.findUnique({
       where: { clerkUserId: userId },

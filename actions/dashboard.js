@@ -1,10 +1,10 @@
 "use server";
 
-import aj from "@/lib/arcjet";
 import { db } from "@/lib/prisma";
-import { request } from "@arcjet/next";
 import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
+import { accountLimiter, checkRateLimit } from "@/lib/arcjet-protection";
 
 const serializeTransaction = (obj) => {
   const serialized = { ...obj };
@@ -56,30 +56,14 @@ export async function createAccount(data) {
     const { userId } = await auth();
     if (!userId) throw new Error("Unauthorized");
 
-    // Get request data for ArcJet
-    const req = await request();
+    // Get client IP for rate limiting
+    const headersList = await headers();
+    const ip = headersList.get("x-forwarded-for") || "127.0.0.1";
 
     // Check rate limit
-    const decision = await aj.protect(req, {
-      userId,
-      requested: 1, // Specify how many tokens to consume
-    });
-
-    if (decision.isDenied()) {
-      if (decision.reason.isRateLimit()) {
-        const { remaining, reset } = decision.reason;
-        console.error({
-          code: "RATE_LIMIT_EXCEEDED",
-          details: {
-            remaining,
-            resetInSeconds: reset,
-          },
-        });
-
-        throw new Error("Too many requests. Please try again later.");
-      }
-
-      throw new Error("Request blocked");
+    const rateLimitCheck = await checkRateLimit(accountLimiter, userId, ip);
+    if (!rateLimitCheck.success) {
+      throw new Error(rateLimitCheck.error);
     }
 
     const user = await db.user.findUnique({
